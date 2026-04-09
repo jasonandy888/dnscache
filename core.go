@@ -37,6 +37,8 @@ var (
 	dnsHostChan                    = make(chan dnsHost, scale)
 	dnsHostChanExpire              = make(chan dnsHost, scale*25)
 	dnsHostLock, dnsHostLockExpire sync.Mutex
+	maxEntries   int
+	maxEntriesMu sync.RWMutex
 )
 
 // dnsIP ...
@@ -75,6 +77,9 @@ func getHost(host string) (any, bool) {
 
 // intit ...
 func init() {
+        if maxEntries == 0 {
+           	 	maxEntries = 10000
+	}
 	spinUpCacheWriter()
 	spinUpExpireWriter()
 	spinUpExpireGC()
@@ -83,21 +88,27 @@ func init() {
 // spinUpCacheWriter ...
 func spinUpCacheWriter() {
 	go func() {
-		for c := range dnsIPChan {
-			dnsIPLock.Lock()
-			dnsIPMap[c.host] = c.ip
-			dnsIPLock.Unlock()
-			dnsIPChanExpire <- c
-		}
-	}()
+	    for c := range dnsIPChan {
+	    	if shouldEvictIP() {
+		    	evictOneIP()
+	    	}
+	    	dnsIPLock.Lock()
+     		dnsIPMap[c.host] = c.ip
+	    	dnsIPLock.Unlock()
+    		dnsIPChanExpire <- c
+    	}
+    }()
 	go func() {
-		for c := range dnsHostChan {
-			dnsHostLock.Lock()
-			dnsHostMap[c.host] = c.addrs
-			dnsHostLock.Unlock()
-			dnsHostChanExpire <- c
-		}
-	}()
+    	for c := range dnsHostChan {
+    		if shouldEvictHost() {
+	    		evictOneHost()
+    		}
+    		dnsHostLock.Lock()
+	    	dnsHostMap[c.host] = c.addrs
+    		dnsHostLock.Unlock()
+    		dnsHostChanExpire <- c
+    	}
+    }()
 }
 
 // spinUpExpireWriter ...
@@ -207,4 +218,55 @@ func cleanHostCache() {
 	dnsHostLockExpire.Unlock()
 	bgHost.Wait()
 	dnsHostLock.Unlock()
+}
+
+func SetMaxEntries(n int) {
+	maxEntriesMu.Lock()
+	defer maxEntriesMu.Unlock()
+	maxEntries = n
+}
+
+func shouldEvictIP() bool {
+	maxEntriesMu.RLock()
+	limit := maxEntries
+	maxEntriesMu.RUnlock()
+	if limit <= 0 {
+		return false
+	}
+	dnsIPLock.RLock()
+	defer dnsIPLock.RUnlock()
+	return len(dnsIPMap) >= limit
+}
+
+func evictOneIP() {
+	dnsIPLock.Lock()
+	defer dnsIPLock.Unlock()
+	for k := range dnsIPMap {
+		delete(dnsIPMap, k)
+		dnsIPLockExpire.Lock()
+		delete(dnsIPExpire, k)
+		dnsIPLockExpire.Unlock()
+		break
+	}
+}
+
+func shouldEvictHost() bool {
+	maxEntriesMu.RLock()
+	limit := maxEntries
+	maxEntriesMu.RUnlock()
+	if limit <= 0 {
+		return false
+	}
+	dnsHostLock.RLock()
+	defer dnsHostLock.RUnlock()
+	return len(dnsHostMap) >= limit
+}
+
+func evictOneHost() {
+	dnsHostLock.Lock()
+	defer dnsHostLock.Unlock()
+	for k := range dnsHostMap {
+		delete(dnsHostMap, k)
+		break
+	}
 }
