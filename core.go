@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sync"
 	"time"
+	"sync/atomic"
 )
 
 const (
@@ -53,25 +54,31 @@ type dnsHost struct {
 	addrs any
 }
 
-// getIP ...
 func getIP(host string) ([]net.IP, bool) {
 	dnsIPLock.Lock()
 	if ip, ok := dnsIPMap[host]; ok {
 		dnsIPLock.Unlock()
+		atomic.AddUint64(&StatsHits, 1) 
+		atomic.AddUint64(&StatsQueries, 1)
 		return ip, true
 	}
 	dnsIPLock.Unlock()
+	atomic.AddUint64(&StatsMisses, 1) 
+	atomic.AddUint64(&StatsQueries, 1)
 	return []net.IP{}, false
 }
 
-// getHost ...
 func getHost(host string) (any, bool) {
 	dnsHostLock.Lock()
 	if addrs, ok := dnsHostMap[host]; ok {
 		dnsHostLock.Unlock()
+		atomic.AddUint64(&StatsHits, 1)
+		atomic.AddUint64(&StatsQueries, 1)
 		return addrs, true
 	}
 	dnsHostLock.Unlock()
+	atomic.AddUint64(&StatsMisses, 1)
+	atomic.AddUint64(&StatsQueries, 1)
 	return nil, false
 }
 
@@ -269,4 +276,16 @@ func evictOneHost() {
 		delete(dnsHostMap, k)
 		break
 	}
+}
+
+func GetCacheEntries() int {
+	dnsIPLock.RLock()
+	ipCount := len(dnsIPMap)
+	dnsIPLock.RUnlock()
+
+	dnsHostLock.RLock()
+	hostCount := len(dnsHostMap)
+	dnsHostLock.RUnlock()
+
+	return ipCount + hostCount
 }

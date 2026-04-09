@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+var (
+	StatsQueries uint64
+	StatsHits    uint64
+	StatsMisses  uint64
+)
+
 //
 // SIMPLE STDLIB "NET" PKG API COMPATIBLE INPLACE
 //
