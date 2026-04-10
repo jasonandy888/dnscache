@@ -184,17 +184,15 @@ func (r *Resolver) Set(key string, value []string) {
 		return
 	}
 	if r.maxEntries > 0 {
-		dnsIPLock.RLock()
+		dnsIPLock.Lock()
 		curSize := len(dnsIPMap)
-		dnsIPLock.RUnlock()
 		if curSize >= r.maxEntries {
-			dnsIPLock.Lock()
 			for k := range dnsIPMap {
 				delete(dnsIPMap, k)
 				break
 			}
-			dnsIPLock.Unlock()
 		}
+		dnsIPLock.Unlock()
 	}
 	dnsIPChan <- dnsIP{host: key, ip: ips}
 }

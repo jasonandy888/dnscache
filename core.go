@@ -29,14 +29,14 @@ var (
 	dnsIPExpire                = make(map[string]int64, scale)
 	dnsIPChan                  = make(chan dnsIP, scale)
 	dnsIPChanExpire            = make(chan dnsIP, scale*25)
-	dnsIPLock, dnsIPLockExpire sync.Mutex
+	dnsIPLock, dnsIPLockExpire sync.RWMutex
 	// Host Cache
 	bgHost                         sync.WaitGroup
 	dnsHostMap                     = make(map[string]any, scale)
 	dnsHostExpire                  = make(map[string]int64, scale)
 	dnsHostChan                    = make(chan dnsHost, scale)
 	dnsHostChanExpire              = make(chan dnsHost, scale*25)
-	dnsHostLock, dnsHostLockExpire sync.Mutex
+	dnsHostLock, dnsHostLockExpire sync.RWMutex
 	maxEntries   int
 	maxEntriesMu sync.RWMutex
 	globalMinTTL int64 = 24 * 60 * 60
