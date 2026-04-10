@@ -18,7 +18,6 @@ const (
 	_txt         = "TXT"
 	_ptr         = "PTR"
 	_cname       = "CNAME"
-	_minTTL      = 24 * 60 * 60     // force cache dns entries for one day, ignore (mostly bungled) ttl
 	_expireEvery = 60 * time.Minute // run expire process ever 20 minutes
 )
 
@@ -40,6 +39,7 @@ var (
 	dnsHostLock, dnsHostLockExpire sync.Mutex
 	maxEntries   int
 	maxEntriesMu sync.RWMutex
+	globalMinTTL int64 = 24 * 60 * 60
 	GlobalStatsQueries uint64
 	GlobalStatsHits    uint64
 	GlobalStatsMisses  uint64
@@ -126,14 +126,14 @@ func spinUpExpireWriter() {
 	go func() {
 		for c := range dnsIPChanExpire {
 			dnsIPLockExpire.Lock()
-			dnsIPExpire[c.host] = time.Now().Unix() + _minTTL
+			dnsIPExpire[c.host] = time.Now().Unix() + atomic.LoadInt64(&globalMinTTL)
 			dnsIPLockExpire.Unlock()
 		}
 	}()
 	go func() {
 		for c := range dnsHostChanExpire {
 			dnsHostLockExpire.Lock()
-			dnsHostExpire[c.host] = time.Now().Unix() + _minTTL
+			dnsHostExpire[c.host] = time.Now().Unix() + atomic.LoadInt64(&globalMinTTL)
 			dnsHostLockExpire.Unlock()
 		}
 	}()
@@ -234,6 +234,10 @@ func SetMaxEntries(n int) {
 	maxEntriesMu.Lock()
 	defer maxEntriesMu.Unlock()
 	maxEntries = n
+}
+
+func SetCacheTTL(seconds int64) {
+	atomic.StoreInt64(&globalMinTTL, seconds)
 }
 
 func shouldEvictIP() bool {
