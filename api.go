@@ -142,12 +142,12 @@ func CleanCache() {
 }
 
 type Resolver struct {
-	maxEntries   int
 	statsQueries uint64
 	statsHits    uint64
 	statsMisses  uint64
-	mu          sync.RWMutex
-	stringCache map[string]string
+	maxEntries   int
+	mu           sync.RWMutex
+	stringCache  map[string]string
 }
 
 func NewResolver(maxEntries int) *Resolver {
