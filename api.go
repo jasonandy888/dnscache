@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 var (
@@ -137,4 +139,97 @@ func LookupAddr(addr string) ([]string, error) {
 // CleanCache ...
 func CleanCache() {
 	cleanCacheAll()
+}
+
+type Resolver struct {
+	maxEntries   int
+	statsQueries uint64
+	statsHits    uint64
+	statsMisses  uint64
+	mu          sync.RWMutex
+	stringCache map[string]string
+}
+
+func NewResolver(maxEntries int) *Resolver {
+	return &Resolver{
+		maxEntries:  maxEntries,
+		stringCache: make(map[string]string),
+	}
+}
+
+func (r *Resolver) Get(key string) ([]string, bool) {
+	atomic.AddUint64(&r.statsQueries, 1)
+	dnsIPLock.Lock()
+	defer dnsIPLock.Unlock()
+	if ips, ok := dnsIPMap[key]; ok {
+		atomic.AddUint64(&r.statsHits, 1)
+		strIPs := make([]string, len(ips))
+		for i, ip := range ips {
+			strIPs[i] = ip.String()
+		}
+		return strIPs, true
+	}
+	atomic.AddUint64(&r.statsMisses, 1)
+	return nil, false
+}
+
+func (r *Resolver) Set(key string, value []string) {
+	ips := make([]net.IP, 0, len(value))
+	for _, s := range value {
+		if ip := net.ParseIP(s); ip != nil {
+			ips = append(ips, ip)
+		}
+	}
+	if len(ips) == 0 {
+		return
+	}
+	if r.maxEntries > 0 {
+		dnsIPLock.RLock()
+		curSize := len(dnsIPMap)
+		dnsIPLock.RUnlock()
+		if curSize >= r.maxEntries {
+			dnsIPLock.Lock()
+			for k := range dnsIPMap {
+				delete(dnsIPMap, k)
+				break
+			}
+			dnsIPLock.Unlock()
+		}
+	}
+	dnsIPChan <- dnsIP{host: key, ip: ips}
+}
+
+func (r *Resolver) SetString(key, value string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.maxEntries > 0 && len(r.stringCache) >= r.maxEntries {
+		for k := range r.stringCache {
+			delete(r.stringCache, k)
+			break
+		}
+	}
+	r.stringCache[key] = value
+}
+
+func (r *Resolver) GetString(key string) (string, bool) {
+	atomic.AddUint64(&r.statsQueries, 1)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if val, ok := r.stringCache[key]; ok {
+		atomic.AddUint64(&r.statsHits, 1)
+		return val, true
+	}
+	atomic.AddUint64(&r.statsMisses, 1)
+	return "", false
+}
+
+func (r *Resolver) Stats() (queries, hits, misses, entries uint64) {
+	r.mu.RLock()
+	stringEntries := len(r.stringCache)
+	r.mu.RUnlock()
+	return atomic.LoadUint64(&r.statsQueries),
+		atomic.LoadUint64(&r.statsHits),
+		atomic.LoadUint64(&r.statsMisses),
+		uint64(stringEntries) 
 }

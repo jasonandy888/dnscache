@@ -40,6 +40,9 @@ var (
 	dnsHostLock, dnsHostLockExpire sync.Mutex
 	maxEntries   int
 	maxEntriesMu sync.RWMutex
+	GlobalStatsQueries uint64
+	GlobalStatsHits    uint64
+	GlobalStatsMisses  uint64
 )
 
 // dnsIP ...
