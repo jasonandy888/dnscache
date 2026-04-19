@@ -1,4 +1,3 @@
-// package dnscache ...
 package dnscache
 
 import (

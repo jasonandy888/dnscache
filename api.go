@@ -1,13 +1,12 @@
-// package dnscache provides an example async and multithreaded map based dnscache
 package dnscache
 
-// import
 import (
 	"errors"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 var (
@@ -16,11 +15,6 @@ var (
 	StatsMisses  uint64
 )
 
-//
-// SIMPLE STDLIB "NET" PKG API COMPATIBLE INPLACE
-//
-
-// LookupIP ...
 func LookupIP(host string) ([]net.IP, error) {
 	if ip, ok := getIP(host); ok {
 		return ip, nil
@@ -142,21 +136,21 @@ func CleanCache() {
 }
 
 type Resolver struct {
-	statsQueries uint64
-	statsHits    uint64
-	statsMisses  uint64
-	maxEntries   int
-	mu           sync.RWMutex
-	stringCache  map[string]string
-	stringExpire map[string]int64
+    statsQueries uint64
+    statsHits    uint64
+    statsMisses  uint64
+    maxEntries   int
+    mu           sync.RWMutex
+    stringCache  map[string]string
+    stringExpire map[string]int64
 }
 
 func NewResolver(maxEntries int) *Resolver {
-	return &Resolver{
-		maxEntries:  maxEntries,
-		stringCache: make(map[string]string),
-		stringExpire: make(map[string]int64),
-	}
+    return &Resolver{
+        maxEntries:   maxEntries,
+        stringCache:  make(map[string]string),
+        stringExpire: make(map[string]int64),
+    }
 }
 
 func (r *Resolver) Get(key string) ([]string, bool) {
@@ -199,44 +193,48 @@ func (r *Resolver) Set(key string, value []string) {
 	dnsIPChan <- dnsIP{host: key, ip: ips}
 }
 
-func (r *Resolver) SetString(key, value string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (r *Resolver) Clear() {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    r.stringCache = make(map[string]string)
+    r.stringExpire = make(map[string]int64)
+}
 
-	if r.maxEntries > 0 && len(r.stringCache) >= r.maxEntries {
-		for k := range r.stringCache {
-			delete(r.stringCache, k)
-			break
-		}
-	}
-	r.stringCache[key] = value
+func (r *Resolver) SetStringWithTTL(key, value string, ttl int64) {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+
+    if r.maxEntries > 0 && len(r.stringCache) >= r.maxEntries {
+        for k := range r.stringCache {
+            delete(r.stringCache, k)
+            delete(r.stringExpire, k)
+            break
+        }
+    }
+    r.stringCache[key] = value
+    r.stringExpire[key] = time.Now().Unix() + ttl
 }
 
 func (r *Resolver) GetString(key string) (string, bool) {
-	atomic.AddUint64(&r.statsQueries, 1)
-	r.mu.RLock()
-	val, ok := r.stringCache[key]
-	expire, hasExpire := r.stringExpire[key]
-	r.mu.RUnlock()
+    atomic.AddUint64(&r.statsQueries, 1)
+    r.mu.Lock()
+    defer r.mu.Unlock()
 
-	if !ok {
-		atomic.AddUint64(&r.statsMisses, 1)
-		return "", false
-	}
+    val, ok := r.stringCache[key]
+    if !ok {
+        atomic.AddUint64(&r.statsMisses, 1)
+        return "", false
+    }
 
-	if hasExpire && time.Now().Unix() > expire {
-		go func() {
-			r.mu.Lock()
-			delete(r.stringCache, key)
-			delete(r.stringExpire, key)
-			r.mu.Unlock()
-		}()
-		atomic.AddUint64(&r.statsMisses, 1)
-		return "", false
-	}
+    if expire, hasExpire := r.stringExpire[key]; hasExpire && time.Now().Unix() > expire {
+        delete(r.stringCache, key)
+        delete(r.stringExpire, key)
+        atomic.AddUint64(&r.statsMisses, 1)
+        return "", false
+    }
 
-	atomic.AddUint64(&r.statsHits, 1)
-	return val, true
+    atomic.AddUint64(&r.statsHits, 1)
+    return val, true
 }
 
 func (r *Resolver) Stats() (queries, hits, misses, entries uint64) {
