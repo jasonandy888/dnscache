@@ -148,12 +148,14 @@ type Resolver struct {
 	maxEntries   int
 	mu           sync.RWMutex
 	stringCache  map[string]string
+	stringExpire map[string]int64
 }
 
 func NewResolver(maxEntries int) *Resolver {
 	return &Resolver{
 		maxEntries:  maxEntries,
 		stringCache: make(map[string]string),
+		stringExpire: make(map[string]int64),
 	}
 }
 
@@ -213,13 +215,28 @@ func (r *Resolver) SetString(key, value string) {
 func (r *Resolver) GetString(key string) (string, bool) {
 	atomic.AddUint64(&r.statsQueries, 1)
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if val, ok := r.stringCache[key]; ok {
-		atomic.AddUint64(&r.statsHits, 1)
-		return val, true
+	val, ok := r.stringCache[key]
+	expire, hasExpire := r.stringExpire[key]
+	r.mu.RUnlock()
+
+	if !ok {
+		atomic.AddUint64(&r.statsMisses, 1)
+		return "", false
 	}
-	atomic.AddUint64(&r.statsMisses, 1)
-	return "", false
+
+	if hasExpire && time.Now().Unix() > expire {
+		go func() {
+			r.mu.Lock()
+			delete(r.stringCache, key)
+			delete(r.stringExpire, key)
+			r.mu.Unlock()
+		}()
+		atomic.AddUint64(&r.statsMisses, 1)
+		return "", false
+	}
+
+	atomic.AddUint64(&r.statsHits, 1)
+	return val, true
 }
 
 func (r *Resolver) Stats() (queries, hits, misses, entries uint64) {
@@ -229,5 +246,5 @@ func (r *Resolver) Stats() (queries, hits, misses, entries uint64) {
 	return atomic.LoadUint64(&r.statsQueries),
 		atomic.LoadUint64(&r.statsHits),
 		atomic.LoadUint64(&r.statsMisses),
-		uint64(stringEntries) 
+		uint64(stringEntries)
 }

@@ -296,3 +296,19 @@ func GetCacheEntries() int {
 
 	return ipCount + hostCount
 }
+
+func (r *Resolver) SetStringWithTTL(key, value string, ttl int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.maxEntries > 0 && len(r.stringCache) >= r.maxEntries {
+		for k := range r.stringCache {
+			delete(r.stringCache, k)
+			delete(r.stringExpire, k)
+			break
+		}
+	}
+
+	r.stringCache[key] = value
+	r.stringExpire[key] = time.Now().Unix() + ttl
+}
