@@ -204,6 +204,10 @@ func (r *Resolver) SetStringWithTTL(key, value string, ttl int64) {
     r.mu.Lock()
     defer r.mu.Unlock()
 
+    if _, exists := r.stringCache[key]; exists {
+        delete(r.stringExpire, key)
+    }
+
     if r.maxEntries > 0 && len(r.stringCache) >= r.maxEntries {
         for k := range r.stringCache {
             delete(r.stringCache, k)
@@ -211,6 +215,7 @@ func (r *Resolver) SetStringWithTTL(key, value string, ttl int64) {
             break
         }
     }
+
     r.stringCache[key] = value
     r.stringExpire[key] = time.Now().Unix() + ttl
 }
