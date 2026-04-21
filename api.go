@@ -126,10 +126,6 @@ func LookupAddr(addr string) ([]string, error) {
 	return hosts, nil
 }
 
-//
-// ADDITIONAL NEW INTERFACES
-//
-
 // CleanCache ...
 func CleanCache() {
 	cleanCacheAll()
@@ -143,6 +139,9 @@ type Resolver struct {
     mu           sync.RWMutex
     stringCache  map[string]string
     stringExpire map[string]int64
+	prefetchCallback func(key string)
+    prefetchThreshold float64 
+    originalTTL      map[string]int64
 }
 
 func NewResolver(maxEntries int) *Resolver {
@@ -150,7 +149,15 @@ func NewResolver(maxEntries int) *Resolver {
         maxEntries:   maxEntries,
         stringCache:  make(map[string]string),
         stringExpire: make(map[string]int64),
+		originalTTL:  make(map[string]int64), 
     }
+}
+
+func (r *Resolver) SetPrefetchCallback(cb func(key string), threshold float64) {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    r.prefetchCallback = cb
+    r.prefetchThreshold = threshold
 }
 
 func (r *Resolver) Get(key string) ([]string, bool) {
@@ -198,6 +205,7 @@ func (r *Resolver) Clear() {
     defer r.mu.Unlock()
     r.stringCache = make(map[string]string)
     r.stringExpire = make(map[string]int64)
+    r.originalTTL = make(map[string]int64) 
 }
 
 func (r *Resolver) SetStringWithTTL(key, value string, ttl int64) {
@@ -206,36 +214,63 @@ func (r *Resolver) SetStringWithTTL(key, value string, ttl int64) {
 
     if _, exists := r.stringCache[key]; exists {
         delete(r.stringExpire, key)
+        delete(r.originalTTL, key) 
     }
 
     if r.maxEntries > 0 && len(r.stringCache) >= r.maxEntries {
         for k := range r.stringCache {
             delete(r.stringCache, k)
             delete(r.stringExpire, k)
+            delete(r.originalTTL, k) 
             break
         }
     }
 
     r.stringCache[key] = value
-    r.stringExpire[key] = time.Now().Unix() + ttl
+    expireAt := time.Now().Unix() + ttl
+    r.stringExpire[key] = expireAt
+    r.originalTTL[key] = ttl 
 }
 
 func (r *Resolver) GetString(key string) (string, bool) {
     atomic.AddUint64(&r.statsQueries, 1)
     r.mu.Lock()
-    defer r.mu.Unlock()
-
     val, ok := r.stringCache[key]
+    var expire int64
+    var hasExpire bool
+    var originalTTL int64
+    if ok {
+        expire, hasExpire = r.stringExpire[key]
+        originalTTL = r.originalTTL[key]
+    }
+
+    cb := r.prefetchCallback
+    threshold := r.prefetchThreshold
+    r.mu.Unlock()
+
     if !ok {
         atomic.AddUint64(&r.statsMisses, 1)
         return "", false
     }
 
-    if expire, hasExpire := r.stringExpire[key]; hasExpire && time.Now().Unix() > expire {
+    now := time.Now().Unix()
+    if hasExpire && now > expire {
+        r.mu.Lock()
         delete(r.stringCache, key)
         delete(r.stringExpire, key)
+        delete(r.originalTTL, key)
+        r.mu.Unlock()
         atomic.AddUint64(&r.statsMisses, 1)
         return "", false
+    }
+
+    if cb != nil && hasExpire && threshold > 0 && originalTTL > 0 {
+        ttlRemaining := expire - now
+        if ttlRemaining > 0 {
+            if float64(ttlRemaining)/float64(originalTTL) <= threshold {
+                go cb(key)
+            }
+        }
     }
 
     atomic.AddUint64(&r.statsHits, 1)
